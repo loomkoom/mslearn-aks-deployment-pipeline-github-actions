@@ -2,6 +2,10 @@
 
 name: Build and push the tagged build to production
 
+permissions:
+  id-token: write # Required for requesting the JWT
+  contents: read  # Required for actions/checkout
+
 # Controls when the action will run. Triggers the workflow on push or pull request
 # events but only for the main branch
 on:
@@ -41,3 +45,45 @@ jobs:
           context: .
           tags: ${{secrets.ACR_NAME}}.azurecr.io/contoso-website:latest,${{secrets.ACR_NAME}}.azurecr.io/contoso-website:${{ steps.fetch_version.outputs.TAG }}
           push: true
+
+  deploy: 
+    runs-on: ubuntu-latest
+    needs: build_push_image  # Waits for the execution of the previous job
+    steps:
+      - uses: actions/checkout@v4.1.1
+      
+      - name: Install Helm
+        uses: Azure/setup-helm@v4
+        with:
+          version: v3.14.2
+
+      - name: Sign in to Azure with OIDC
+        uses: Azure/login@v2
+        with:
+          # ClientId of the Azure Service principal created.
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          # TenantId of the Azure Service principal created.
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          # Azure subscriptionId
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure Kubernetes set context
+        uses: Azure/aks-set-context@v3
+        with:
+          # Resource Group Name
+          resource-group:  ${{ secrets.RESOURCE_GROUP }}
+          # AKS Cluster Name
+          cluster-name: ${{ secrets.CLUSTER_NAME }}     
+
+      - name: Run Helm Deploy
+        run: |
+          helm upgrade \
+            --install \
+            --create-namespace \
+            --atomic \
+            --wait \
+            --namespace staging \
+            contoso-website \
+            ./kubernetes/contoso-website \
+            --set image.repository=${{ secrets.ACR_NAME }} \
+            --set dns.name=${{ secrets.DNS_NAME }}
